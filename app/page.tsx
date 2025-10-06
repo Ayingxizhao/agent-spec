@@ -1,103 +1,216 @@
-import Image from "next/image";
+'use client';
+
+import { useState } from 'react';
+import InitialInput from '@/components/InitialInput';
+import QuestionCard from '@/components/QuestionCard';
+import ProgressBar from '@/components/ProgressBar';
+import { ProgressProvider, useProgress } from '@/components/context/ProgressContext';
+import PlanSheet from '@/components/PlanSheet';
+
+const AppContent: React.FC = () => {
+  const {
+    progressState,
+    updateQuestionProgress,
+    setCurrentQuestion,
+    initializeFromPlan
+  } = useProgress();
+
+  const [questionPlan, setQuestionPlan] = useState<any[]>([]);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [userIdea, setUserIdea] = useState('');
+  const [isStarted, setIsStarted] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [analysis, setAnalysis] = useState<any>(null);
+  const [estimatedTime, setEstimatedTime] = useState('');
+
+  const generatePlan = async (idea: string) => {
+    setIsLoading(true);
+    try {
+      const response = await fetch('/api/generate-question', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userInput: idea,
+          requestType: 'generate_plan'
+        }),
+      });
+      
+      const data = await response.json();
+      
+      if (data.error) {
+        console.error('Error generating plan:', data.error);
+        return;
+      }
+
+      // Filter plan to only questions that need to be asked
+      const questionsToAsk = data.questionPlan.filter((item: any) => 
+        item.status === 'ASK' || item.status === 'CONFIRM'
+      );
+
+      setQuestionPlan(questionsToAsk);
+      setAnalysis(data.analysis);
+      setEstimatedTime(data.estimatedTime);
+      setCurrentQuestionIndex(0);
+      
+      // Initialize progress context with the complete plan
+      initializeFromPlan(data.questionPlan, data.analysis);
+      
+      // Set the first question as current
+      if (questionsToAsk.length > 0) {
+        setCurrentQuestion(questionsToAsk[0].question_id);
+        updateQuestionProgress(questionsToAsk[0].question_id, {
+          status: 'active',
+          phase: questionsToAsk[0].progressMetadata.phase,
+          reasoning: questionsToAsk[0].reasoning,
+          confidence: questionsToAsk[0].progressMetadata.confidence
+        });
+      }
+      
+    } catch (error) {
+      console.error('Failed to generate plan:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleInitialSubmit = (idea: string) => {
+    setUserIdea(idea);
+    setIsStarted(true);
+    generatePlan(idea);
+  };
+
+  const handleAnswer = (answer: any) => {
+    const currentQuestion = questionPlan[currentQuestionIndex];
+    
+    // Update progress for current question
+    updateQuestionProgress(currentQuestion.question_id, {
+      status: 'completed',
+      userAnswer: answer,
+      timeSpent: Date.now() - progressState.analytics.startTime
+    });
+    
+    // Move to next question or finish
+    if (currentQuestionIndex < questionPlan.length - 1) {
+      const nextIndex = currentQuestionIndex + 1;
+      const nextQuestion = questionPlan[nextIndex];
+      
+      setCurrentQuestionIndex(nextIndex);
+      setCurrentQuestion(nextQuestion.question_id);
+      
+      updateQuestionProgress(nextQuestion.question_id, {
+        status: 'active'
+      });
+    } else {
+      // All questions answered - show completion
+      setCurrentQuestion(null);
+      console.log('All questions answered!', {
+        userIdea,
+        analysis,
+        progressState
+      });
+    }
+  };
+
+  const getCurrentQuestion = () => {
+    if (questionPlan.length === 0 || currentQuestionIndex >= questionPlan.length) {
+      return null;
+    }
+    return questionPlan[currentQuestionIndex];
+  };
+
+  const currentQuestion = getCurrentQuestion();
+  const isComplete = isStarted && currentQuestionIndex >= questionPlan.length;
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+      {/* Initial Input Screen */}
+      {!isStarted && (
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="max-w-2xl mx-auto px-4 text-center">
+            <h1 className="text-4xl font-bold text-gray-900 mb-4">
+              Agentic Spec Builder
+            </h1>
+            <p className="text-xl text-gray-600 mb-8">
+              Transform your project idea into a comprehensive specification using AI-guided questions
+            </p>
+            <InitialInput onSubmit={handleInitialSubmit} />
+          </div>
+        </div>
+      )}
+
+      {/* Loading Overlay */}
+      {isLoading && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-8 text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Analyzing your idea and generating personalized questions...</p>
+            <p className="text-sm text-gray-500 mt-2">This may take a few seconds</p>
+          </div>
+        </div>
+      )}
+
+      {/* Main Plan Interface */}
+      {isStarted && !isLoading && (
+        <div className="fixed top-4 left-4 right-4 bottom-4 bg-white rounded-xl shadow-lg border">
+          <div className="h-full flex">
+            {/* Plan Sheet */}
+            <div className="flex-1 relative">
+              <PlanSheet />
+            </div>
+            
+            {/* Question Panel */}
+            <div className="w-96 border-l border-gray-200 flex flex-col">
+              <div className="p-4 border-b border-gray-200">
+                <h2 className="font-semibold text-gray-900">Current Question</h2>
+                <p className="text-sm text-gray-600">
+                  {currentQuestionIndex + 1} of {questionPlan.length}
+                </p>
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                {currentQuestion ? (
+                  <div className="p-4">
+                    <QuestionCard 
+                      question={currentQuestion.template} 
+                      onAnswer={handleAnswer}
+                      questionMeta={{
+                        status: currentQuestion.status,
+                        reasoning: currentQuestion.reasoning,
+                        questionId: currentQuestion.question_id
+                      }}
+                    />
+                  </div>
+                ) : isComplete ? (
+                  <div className="p-8 text-center">
+                    <h3 className="text-lg font-semibold text-green-600 mb-2">🎉 Complete!</h3>
+                    <p className="text-gray-600 text-sm mb-4">All questions answered</p>
+                    <button 
+                      onClick={() => {
+                        console.log('Generate final specification');
+                      }}
+                      className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 transition-colors"
+                    >
+                      Generate Specification
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-8 text-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                    <p className="text-gray-600 text-sm">Loading questions...</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default function Home() {
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
-
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+    <ProgressProvider>
+      <AppContent />
+    </ProgressProvider>
   );
 }
