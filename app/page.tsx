@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import TaskInput from '@/components/TaskInput';
 import CodeSuggestion from '@/components/CodeSuggestion';
+import PatternTestPanel from '@/components/PatternTestPanel';
 import { CodingTask, CodeSuggestion as CodeSuggestionType, TaskHistory } from '@/types/coding';
 
 export default function Home() {
@@ -117,6 +118,14 @@ export default function Home() {
               An AI that learns your coding preferences and patterns
             </p>
           </div>
+
+          {/* Development Test Panel */}
+          <div className="mb-8">
+            <PatternTestPanel />
+          </div>
+
+          {/* Divider */}
+          <div className="border-t-2 border-gray-300 my-8"></div>
 
           <div className="mb-8">
             <TaskInput onSubmit={handleTaskSubmit} isLoading={isLoading} />
