@@ -59,15 +59,24 @@ export async function testConnection(): Promise<boolean> {
  */
 export async function initializeSchema(): Promise<void> {
   try {
-    // Create patterns table
+    // Enable pgvector extension
+    await sql`CREATE EXTENSION IF NOT EXISTS vector`;
+    
+    // Create unified patterns table with vector support
     await sql`
-      CREATE TABLE IF NOT EXISTS patterns (
+      CREATE TABLE IF NOT EXISTS learned_patterns (
         id TEXT PRIMARY KEY,
-        type TEXT NOT NULL,
+        pattern_type TEXT NOT NULL,
+        name TEXT NOT NULL,
         description TEXT NOT NULL,
-        example TEXT,
+        metadata JSONB NOT NULL DEFAULT '{}',
+        confidence FLOAT DEFAULT 0.33,
+        observation_count INT DEFAULT 1,
         task_context TEXT,
-        timestamp BIGINT NOT NULL,
+        evidence TEXT,
+        embedding vector(768),
+        first_seen BIGINT NOT NULL,
+        last_seen BIGINT NOT NULL,
         created_at TIMESTAMP DEFAULT NOW()
       )
     `;
@@ -93,8 +102,9 @@ export async function initializeSchema(): Promise<void> {
     `;
 
     // Create indexes
-    await sql`CREATE INDEX IF NOT EXISTS idx_patterns_type ON patterns(type)`;
-    await sql`CREATE INDEX IF NOT EXISTS idx_patterns_timestamp ON patterns(timestamp DESC)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_learned_patterns_type ON learned_patterns(pattern_type)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_learned_patterns_metadata ON learned_patterns USING GIN(metadata)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_learned_patterns_embedding ON learned_patterns USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_history_task_id ON task_history(task_id)`;
 
     console.log('Database schema initialized successfully');

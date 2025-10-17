@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { addLearnedPreference, addTaskToHistory } from '@/lib/learning-store';
 import { LearnedPreference, CorrectionFeedback, TaskHistory } from '@/types/coding';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
 export async function POST(req: NextRequest) {
   try {
@@ -35,19 +34,16 @@ ${correctedCode ? `Corrected Code:\n${correctedCode}` : ''}
 
 Extract a clear, reusable preference that should be applied to future tasks. Format as a single sentence describing what to do or avoid.`;
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a pattern extraction assistant. Extract clear, actionable preferences from code corrections. Return only the preference statement, nothing else.'
-        },
-        { role: 'user', content: analysisPrompt }
-      ],
-      temperature: 0.3,
+    const prompt = `You are a pattern extraction assistant. Extract clear, actionable preferences from code corrections. Return only the preference statement, nothing else.\n\n${analysisPrompt}`;
+    
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.3,
+      },
     });
 
-    const preferenceDescription = completion.choices[0].message.content?.trim() || feedback;
+    const preferenceDescription = result.response.text()?.trim() || feedback;
 
     // Create learned preference
     const newPreference: LearnedPreference = {

@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
-import OpenAI from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { computeCodeDiff } from '@/lib/diff-utils';
+import { saveSecurityPattern } from '@/lib/pattern-store';
+import { SecurityPattern } from '@/types/pattern';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
 // Hardcoded test examples
 const BASIC_LOGIN_ENDPOINT = `const express = require('express');
@@ -93,8 +94,10 @@ export async function GET() {
       'secure-login.js'
     );
 
-    // 2. Ask GPT-4o-mini to extract patterns
-    const analysisPrompt = `A code generator produced an initial code attempting to made secure and an expert then amended it with stronger security practices and follows better to his company's workflow. Review the diff and capture the concrete security patterns that the expert introduced.
+    // 2. Ask Gemini to extract patterns
+    const analysisPrompt = `You are a code security expert who extracts reusable patterns from code diffs. Always respond with valid JSON only.
+
+A code generator produced an initial code attempting to made secure and an expert then amended it with stronger security practices and follows better to his company's workflow. Review the diff and capture the concrete security patterns that the expert introduced.
 
 Code Diff:
 ${diffResult.unifiedDiff}
@@ -113,20 +116,15 @@ For each pattern, provide the following fields:
 Respond with a JSON object that has a single top-level key "patterns" whose value is an array of these pattern objects.
 Do not add commentary outside the JSON object.`;
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a code security expert who extracts reusable patterns from code diffs. Always respond with valid JSON only.'
-        },
-        { role: 'user', content: analysisPrompt }
-      ],
-      temperature: 0.3,
-      response_format: { type: 'json_object' }
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: analysisPrompt }] }],
+      generationConfig: {
+        temperature: 0.3,
+        responseMimeType: 'application/json',
+      },
     });
 
-    const responseText = completion.choices[0].message.content || '{"patterns": []}';
+    const responseText = result.response.text() || '{"patterns": []}';
 
     // Parse the JSON response
     let extractedPatterns;
@@ -157,8 +155,24 @@ Do not add commentary outside the JSON object.`;
           )
         : [];
     } catch (e) {
-      console.error('Failed to parse GPT response:', responseText);
+      console.error('Failed to parse Gemini response:', e);
+      console.error('Raw response text:', responseText);
       extractedPatterns = [];
+    }
+
+    // Save patterns to database
+    const savedPatterns = [];
+    for (const pattern of extractedPatterns) {
+      try {
+        const saved = await saveSecurityPattern(
+          pattern as SecurityPattern,
+          'Test: Login endpoint security patterns'
+        );
+        savedPatterns.push(saved);
+        console.log('Saved pattern:', saved.name);
+      } catch (error) {
+        console.error('Failed to save pattern:', error);
+      }
     }
 
     return NextResponse.json({
@@ -171,6 +185,7 @@ Do not add commentary outside the JSON object.`;
       originalCode: BASIC_LOGIN_ENDPOINT,
       modifiedCode: SECURE_LOGIN_ENDPOINT,
       extractedPatterns,
+      savedPatterns,
       rawGPTResponse: responseText,
     });
   } catch (error) {
